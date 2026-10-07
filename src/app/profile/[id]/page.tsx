@@ -1,0 +1,1294 @@
+'use client';
+
+import {
+  use,
+  useEffect,
+  useState
+} from 'react';
+
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+
+import {
+  Heart,
+  MapPin,
+  MessageCircle,
+  ShieldCheck
+} from 'lucide-react';
+
+import {
+  getProfile,
+  likeProfile,
+  createConversation
+} from '@/lib/data';
+
+import { supabase } from '@/lib/supabase';
+
+import NotificationBell from '@/components/NotificationBell';
+
+import {
+  getProfileDesign,
+  type ProfileDesign
+} from '@/lib/profile-studio';
+
+import {
+  getProfileMedia,
+  type ProfileMedia
+} from '@/lib/profile-media';
+
+import {
+  getSignedPhotoUrl
+} from '@/lib/photo-upload';
+
+type PhotoRow = {
+  id: string;
+  storage_path: string;
+  display_order: number;
+};
+
+type Profile = {
+  id: string;
+  first_name: string;
+  birth_date: string | null;
+  gender: string | null;
+  city: string | null;
+  state: string | null;
+  about_me: string | null;
+  interests_text: string | null;
+  photos:
+    | PhotoRow[]
+    | null;
+};
+
+function getAge(date: string | null) {
+  if (!date) return '';
+
+  const birth = new Date(date);
+  const now = new Date();
+
+  let age =
+    now.getFullYear() -
+    birth.getFullYear();
+
+  if (
+    now.getMonth() < birth.getMonth() ||
+    (
+      now.getMonth() === birth.getMonth() &&
+      now.getDate() < birth.getDate()
+    )
+  ) {
+    age--;
+  }
+
+  return age > 0 ? age : '';
+}
+
+function getFontFamily(
+  value: string
+) {
+  switch (value) {
+    case 'serif':
+      return 'Georgia, serif';
+
+    case 'monospace':
+      return 'ui-monospace, SFMono-Regular, Menlo, monospace';
+
+    case 'rounded':
+      return 'ui-rounded, system-ui, sans-serif';
+
+    default:
+      return 'system-ui, sans-serif';
+  }
+}
+
+function sanitizePublicHtml(
+  input: string
+) {
+  if (
+    typeof window === 'undefined' ||
+    !input.trim()
+  ) {
+    return '';
+  }
+
+  const parser = new DOMParser();
+
+  const doc = parser.parseFromString(
+    `<div id="yourspace-root">${input}</div>`,
+    'text/html'
+  );
+
+  const root =
+    doc.querySelector(
+      '#yourspace-root'
+    );
+
+  if (!root) {
+    return '';
+  }
+
+  root
+    .querySelectorAll(
+      'script, iframe, object, embed, form, input, button, textarea, select, link, meta, base'
+    )
+    .forEach(
+      element =>
+        element.remove()
+    );
+
+  root
+    .querySelectorAll('*')
+    .forEach(element => {
+      Array.from(
+        element.attributes
+      ).forEach(attribute => {
+        const name =
+          attribute.name.toLowerCase();
+
+        const value =
+          attribute.value
+            .trim()
+            .toLowerCase();
+
+        if (
+          name.startsWith('on') ||
+          name === 'srcdoc' ||
+          (
+            [
+              'href',
+              'src',
+              'action',
+              'formaction'
+            ].includes(name) &&
+            value.startsWith(
+              'javascript:'
+            )
+          )
+        ) {
+          element.removeAttribute(
+            attribute.name
+          );
+        }
+      });
+    });
+
+  return root.innerHTML;
+}
+
+export default function ProfilePage({
+  params
+}: {
+  params: Promise<{
+    id: string;
+  }>;
+}) {
+  const { id } = use(params);
+  const router = useRouter();
+
+  const [person, setPerson] =
+    useState<Profile | null>(null);
+
+  const [design, setDesign] =
+    useState<ProfileDesign | null>(null);
+
+  const [media, setMedia] =
+    useState<ProfileMedia | null>(null);
+
+  const [photoUrls, setPhotoUrls] =
+    useState<
+      Record<string, string>
+    >({});
+
+  const [isOwner, setIsOwner] =
+    useState(false);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [message, setMessage] =
+    useState('');
+
+  useEffect(() => {
+    async function load() {
+      const [
+        profileResult,
+        designResult,
+        mediaResult,
+        userResult
+      ] = await Promise.all([
+        getProfile(id),
+        getProfileDesign(id),
+        getProfileMedia(id),
+        supabase.auth.getUser()
+      ]);
+
+      if (
+        profileResult.profile
+      ) {
+        const loaded =
+          profileResult
+            .profile as unknown as Profile;
+
+        const photos =
+          (loaded.photos ?? [])
+            .slice()
+            .sort(
+              (a, b) =>
+                a.display_order -
+                b.display_order
+            );
+
+        setPerson({
+          ...loaded,
+          photos
+        });
+
+        const entries =
+          await Promise.all(
+            photos.map(
+              async photo => {
+                const result =
+                  await getSignedPhotoUrl(
+                    photo.storage_path
+                  );
+
+                return [
+                  photo.id,
+                  result.url
+                ] as const;
+              }
+            )
+          );
+
+        setPhotoUrls(
+          entries.reduce(
+            (map, [photoId, url]) => {
+              if (url) {
+                map[photoId] = url;
+              }
+              return map;
+            },
+            {} as Record<string, string>
+          )
+        );
+      }
+
+      setDesign(
+        designResult.design
+      );
+
+      setMedia(
+        mediaResult.media
+      );
+
+      setIsOwner(
+        !!userResult.data.user &&
+        userResult.data.user.id === id
+      );
+
+      setLoading(false);
+    }
+
+    void load();
+  }, [id]);
+
+  async function handleLike() {
+    const result =
+      await likeProfile(id);
+
+    if (result.error) {
+      setMessage(
+        result.error.message
+      );
+      return;
+    }
+
+    setMessage(
+      'Profile liked.'
+    );
+  }
+
+  async function handleMessage() {
+    const result =
+      await createConversation(id);
+
+    if (
+      result.error ||
+      !result.conversation
+    ) {
+      setMessage(
+        result.error?.message ||
+        'Unable to start conversation.'
+      );
+      return;
+    }
+
+    router.push(
+      `/messages/${result.conversation.id}`
+    );
+  }
+
+  if (loading) {
+    return (
+      <main className="yourspace-page loading">
+        Loading YourSpace...
+        <style jsx>{`
+          .yourspace-page.loading {
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            font-weight: 800;
+            color: #777e89;
+          }
+        `}
+        </style>
+      </main>
+    );
+  }
+
+  if (!person) {
+    return (
+      <main className="yourspace-page loading">
+        <div>
+          <h1>Profile unavailable</h1>
+          <Link href="/browse">
+            Back to Browse
+          </Link>
+        </div>
+
+        <style jsx>{`
+          .yourspace-page.loading {
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+          }
+
+          h1 {
+            margin: 0 0 12px;
+          }
+
+          a {
+            color: #e84d78;
+            font-weight: 800;
+          }
+        `}</style>
+      </main>
+    );
+  }
+
+  const settings =
+    design?.settings ?? {
+      backgroundColor: '#f6f7f9',
+      panelColor: '#ffffff',
+      textColor: '#17191c',
+      accentColor: '#e84d78',
+      fontFamily: 'system',
+      borderRadius: 18,
+      borderWidth: 1,
+      shadow: 'soft',
+      pageWidth: 920,
+      contentAlignment:
+        'center' as const
+    };
+
+  const age =
+    getAge(
+      person.birth_date
+    );
+
+  const photos =
+    person.photos ?? [];
+
+  const publicHtml =
+    design?.custom_html
+      ? sanitizePublicHtml(
+          design.custom_html
+        )
+      : '';
+
+  const primaryPhoto =
+    photos[0] ?? null;
+
+  const primaryPhotoUrl =
+    primaryPhoto
+      ? photoUrls[
+          primaryPhoto.id
+        ] ?? null
+      : null;
+
+  const hasMusic =
+    Boolean(media?.music_url);
+
+  const hasVideo =
+    Boolean(media?.video_url);
+
+  const pageWidth =
+    Math.min(
+      settings.pageWidth || 920,
+      1180
+    );
+
+  const panelRadius =
+    Math.max(
+      0,
+      settings.borderRadius || 0
+    );
+
+  const shadow =
+    settings.shadow === 'strong'
+      ? '0 24px 70px rgba(0,0,0,.18)'
+      : '0 10px 32px rgba(0,0,0,.08)';
+
+  return (
+    <main
+      className="yourspace-page"
+      style={{
+        backgroundColor:
+          settings.backgroundColor,
+        color:
+          settings.textColor,
+        fontFamily:
+          getFontFamily(
+            settings.fontFamily
+          )
+      }}
+    >
+      <header
+        className="yourspace-nav"
+        style={{
+          borderColor:
+            settings.accentColor
+        }}
+      >
+        <Link
+          href="/browse"
+          className="brand"
+        >
+          findafriend
+          <span>.</span>
+        </Link>
+
+        <div className="nav-actions">
+          <NotificationBell />
+
+          <Link
+            href="/me"
+            className="me-link"
+          >
+            Me
+          </Link>
+        </div>
+      </header>
+
+      <div
+        className="yourspace-wrap"
+        style={{
+          maxWidth:
+            `${pageWidth}px`
+        }}
+      >
+
+        {isOwner && (
+          <div className="owner-tools">
+            <Link
+              href="/profile/studio"
+              className="owner-primary"
+              style={{
+                backgroundColor:
+                  settings.accentColor
+              }}
+            >
+              Edit YourSpace
+            </Link>
+
+            <Link
+              href="/profile"
+              className="owner-secondary"
+            >
+              Edit Profile
+            </Link>
+          </div>
+        )}
+
+        <section className="identity-bar">
+
+          <div className="identity-photos">
+
+            <div
+              className="primary-photo"
+              style={{
+                borderRadius:
+                  panelRadius,
+                borderColor:
+                  settings.accentColor
+              }}
+            >
+              {primaryPhotoUrl ? (
+                <img
+                  src={primaryPhotoUrl}
+                  alt={`${person.first_name} profile`}
+                />
+              ) : (
+                <span>
+                  {person.first_name
+                    .charAt(0)
+                    .toUpperCase()}
+                </span>
+              )}
+            </div>
+
+            {photos.length > 1 && (
+              <div className="thumbs">
+                {photos
+                  .slice(1, 5)
+                  .map(photo => {
+                    const url =
+                      photoUrls[
+                        photo.id
+                      ];
+
+                    return (
+                      <div
+                        className="thumb"
+                        key={photo.id}
+                      >
+                        {url && (
+                          <img
+                            src={url}
+                            alt=""
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+
+          </div>
+
+          <div className="identity-copy">
+
+            <div
+              className="eyebrow"
+              style={{
+                color:
+                  settings.accentColor
+              }}
+            >
+              YOURSPACE
+            </div>
+
+            <h1>
+              {person.first_name}
+              {age
+                ? `, ${age}`
+                : ''}
+            </h1>
+
+            {(person.city ||
+              person.state) && (
+              <div className="location">
+                <MapPin size={15} />
+                {[
+                  person.city,
+                  person.state
+                ]
+                  .filter(Boolean)
+                  .join(', ')}
+              </div>
+            )}
+
+            <div className="identity-about">
+              <span>
+                About Me
+              </span>
+
+              <p>
+                {person.about_me ||
+                  'Welcome to my YourSpace.'}
+              </p>
+            </div>
+
+            {person.interests_text && (
+              <div className="interests">
+                {person.interests_text
+                  .split(',')
+                  .map(interest => (
+                    <span
+                      key={interest}
+                      style={{
+                        borderColor:
+                          settings.accentColor
+                      }}
+                    >
+                      {interest.trim()}
+                    </span>
+                  ))}
+              </div>
+            )}
+
+            <div className="actions">
+              <button
+                type="button"
+                className="action secondary"
+                onClick={() =>
+                  void handleLike()
+                }
+              >
+                <Heart size={16} />
+                Like
+              </button>
+
+              <button
+                type="button"
+                className="action primary"
+                style={{
+                  backgroundColor:
+                    settings.accentColor,
+                  borderColor:
+                    settings.accentColor
+                }}
+                onClick={() =>
+                  void handleMessage()
+                }
+              >
+                <MessageCircle
+                  size={16}
+                />
+                Message
+              </button>
+            </div>
+
+            {message && (
+              <div className="notice">
+                {message}
+              </div>
+            )}
+
+          </div>
+
+        </section>
+
+        <section
+          className="yourspace-content"
+          style={{
+            borderRadius:
+              panelRadius,
+            borderWidth:
+              settings.borderWidth,
+            borderColor:
+              settings.accentColor,
+            boxShadow:
+              shadow
+          }}
+        >
+
+          <div className="yourspace-title">
+            <div>
+
+              <h2>
+                It&apos;s your space.
+              </h2>
+            </div>
+
+            <span>
+              Make it how you like.
+            </span>
+          </div>
+
+          {publicHtml ? (
+            <div
+              className="custom-html"
+              dangerouslySetInnerHTML={{
+                __html:
+                  publicHtml
+              }}
+            />
+          ) : (
+            <div className="empty-yourspace">
+              <h3>
+                Welcome to my YourSpace.
+              </h3>
+
+              <p>
+                This is where the
+                profile owner&apos;s
+                custom space will appear.
+              </p>
+            </div>
+          )}
+
+          {(hasMusic ||
+            hasVideo) && (
+            <div className="media-row">
+
+              {hasMusic && (
+                <div
+                  className="media-item"
+                  style={{
+                    borderColor:
+                      settings.accentColor
+                  }}
+                >
+                  <div className="media-top">
+                    <div>
+                      <small>
+                        YOURSPACE MUSIC
+                      </small>
+
+                      <strong>
+                        {media?.music_title ||
+                          'Music'}
+                      </strong>
+                    </div>
+
+                    <span
+                      className="media-icon"
+                      style={{
+                        color:
+                          settings.accentColor
+                      }}
+                    >
+                      ♪
+                    </span>
+                  </div>
+
+                  <audio
+                    controls
+                    loop
+                    src={
+                      media?.music_url ??
+                      undefined
+                    }
+                  />
+                </div>
+              )}
+
+              {hasVideo && (
+                <div
+                  className="media-item"
+                  style={{
+                    borderColor:
+                      settings.accentColor
+                  }}
+                >
+                  <div className="media-top">
+                    <div>
+                      <small>
+                        YOURSPACE VIDEO
+                      </small>
+
+                      <strong>
+                        Video
+                      </strong>
+                    </div>
+
+                    <span
+                      className="media-icon"
+                      style={{
+                        color:
+                          settings.accentColor
+                      }}
+                    >
+                      ▶
+                    </span>
+                  </div>
+
+                  <video
+                    controls
+                    playsInline
+                    src={
+                      media?.video_url ??
+                      undefined
+                    }
+                  />
+                </div>
+              )}
+
+            </div>
+          )}
+
+        </section>
+
+        <div className="bottom-links">
+          <Link href={`/report/${id}`}>
+            Report profile
+          </Link>
+
+          <Link href="/safety">
+            <ShieldCheck size={13} />
+            Safety
+          </Link>
+        </div>
+
+      </div>
+
+      <style jsx>{`
+        .yourspace-page {
+          min-height: 100vh;
+          padding-bottom: 70px;
+        }
+
+        .yourspace-nav {
+          height: 70px;
+          padding: 0 28px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background: rgba(255,255,255,.72);
+          backdrop-filter: blur(14px);
+          border-bottom: 1px solid;
+        }
+
+        .brand {
+          color: inherit;
+          text-decoration: none;
+          font-size: 21px;
+          font-weight: 950;
+          letter-spacing: -.055em;
+        }
+
+        .brand span {
+          color: #e84d78;
+        }
+
+        .me-link {
+          color: inherit;
+          text-decoration: none;
+          opacity: .7;
+          font-size: 13px;
+          font-weight: 850;
+        }
+
+        .yourspace-wrap {
+          width: calc(100% - 32px);
+          margin: 0 auto;
+          padding-top: 20px;
+        }
+
+        .owner-tools {
+          display: flex;
+          justify-content: flex-end;
+          gap: 8px;
+          margin-bottom: 12px;
+        }
+
+        .owner-tools a {
+          min-height: 36px;
+          padding: 0 12px;
+          display: inline-flex;
+          align-items: center;
+          border-radius: 10px;
+          text-decoration: none;
+          font-size: 11px;
+          font-weight: 900;
+        }
+
+        .owner-primary {
+          color: #fff;
+        }
+
+        .owner-secondary {
+          color: inherit;
+          background: rgba(255,255,255,.7);
+          border: 1px solid rgba(0,0,0,.12);
+        }
+
+        .identity-bar {
+          display: grid;
+          grid-template-columns: 170px minmax(0,1fr);
+          gap: 24px;
+          align-items: center;
+          padding: 18px 0 24px;
+        }
+
+        .identity-photos {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 7px;
+        }
+
+        .primary-photo {
+          width: 170px;
+          height: 185px;
+          overflow: hidden;
+          display: grid;
+          place-items: center;
+          background: rgba(255,255,255,.12);
+          border: 1px solid;
+          font-size: 38px;
+          font-weight: 950;
+        }
+
+        .primary-photo img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+
+        .thumbs {
+          display: flex;
+          gap: 5px;
+        }
+
+        .thumb {
+          width: 42px;
+          height: 48px;
+          overflow: hidden;
+          border-radius: 7px;
+          background: rgba(255,255,255,.35);
+        }
+
+        .thumb img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+
+        .identity-copy {
+          min-width: 0;
+        }
+
+        .eyebrow {
+          font-size: 9px;
+          font-weight: 950;
+          letter-spacing: .12em;
+          text-transform: uppercase;
+        }
+
+        .identity-copy h1 {
+          margin: 5px 0 5px;
+          font-size: clamp(32px, 5vw, 52px);
+          line-height: .95;
+          letter-spacing: -.06em;
+        }
+
+        .location {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          font-size: 12px;
+          opacity: .67;
+          font-weight: 750;
+        }
+
+        .identity-about {
+          margin-top: 13px;
+          max-width: 660px;
+        }
+
+        .identity-about span {
+          display: block;
+          margin-bottom: 4px;
+          font-size: 9px;
+          font-weight: 950;
+          letter-spacing: .08em;
+          text-transform: uppercase;
+          opacity: .55;
+        }
+
+        .identity-about p {
+          margin: 0;
+          font-size: 14px;
+          line-height: 1.5;
+          opacity: .82;
+          white-space: pre-wrap;
+        }
+
+        .interests {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          margin-top: 10px;
+        }
+
+        .interests span {
+          padding: 6px 9px;
+          border: 1px solid;
+          border-radius: 999px;
+          background: rgba(255,255,255,.16);
+          font-size: 10px;
+          font-weight: 850;
+        }
+
+        .actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-top: 15px;
+        }
+
+        .action {
+          min-width: 108px;
+          height: 42px;
+          padding: 0 16px;
+          border-radius: 11px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          font: inherit;
+          font-size: 12px;
+          font-weight: 900;
+          cursor: pointer;
+          transition:
+            transform .16s ease,
+            box-shadow .16s ease,
+            opacity .16s ease;
+        }
+
+        .action.secondary {
+          color: inherit;
+          background: rgba(255,255,255,.10);
+          border: 1px solid rgba(255,255,255,.28);
+        }
+
+        .action.primary {
+          color: #fff;
+          border: 1px solid;
+          box-shadow: 0 8px 20px rgba(232,77,120,.20);
+        }
+
+        .action:hover {
+          transform: translateY(-1px);
+          opacity: .96;
+        }
+
+        .notice {
+          margin-top: 8px;
+          font-size: 11px;
+          font-weight: 800;
+          opacity: .8;
+        }
+
+        .yourspace-content {
+          width: 100%;
+          min-height: 520px;
+          margin-top: 6px;
+          padding: 10px 0 34px;
+          overflow: hidden;
+          border: 0 !important;
+          box-shadow: none !important;
+          background: transparent !important;
+        }
+
+        .yourspace-title {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          justify-content: flex-start;
+          gap: 0;
+          margin-bottom: 24px;
+          padding-bottom: 16px;
+          border-bottom: 1px solid rgba(255,255,255,.14);
+        }
+
+        .yourspace-title h2 {
+          margin: 5px 0 0;
+          font-size: clamp(36px, 4.5vw, 56px);
+          line-height: .94;
+          letter-spacing: -.06em;
+          font-weight: 950;
+        }
+
+        .yourspace-title > span {
+          display: block;
+          margin-top: 7px;
+          font-size: 12px;
+          font-weight: 800;
+          opacity: .58;
+          white-space: normal;
+        }
+
+        .custom-html {
+          width: 100%;
+          min-width: 0;
+          overflow-wrap: anywhere;
+        }
+
+        .custom-html :global(*) {
+          max-width: 100%;
+          box-sizing: border-box;
+        }
+
+        .custom-html :global(img),
+        .custom-html :global(video) {
+          max-width: 100%;
+          height: auto;
+          object-fit: contain;
+        }
+
+        .custom-html :global(audio) {
+          max-width: 100%;
+        }
+
+        .custom-html :global(table) {
+          max-width: 100%;
+          display: block;
+          overflow-x: auto;
+        }
+
+        .custom-html :global(a) {
+          color: inherit;
+        }
+
+        .empty-yourspace {
+          padding: 36px 20px;
+          text-align: center;
+          opacity: .7;
+        }
+
+        .empty-yourspace h3 {
+          margin: 0;
+          font-size: 20px;
+        }
+
+        .empty-yourspace p {
+          margin: 7px 0 0;
+          font-size: 13px;
+        }
+
+        .media-row {
+          display: grid;
+          grid-template-columns: repeat(
+            2,
+            minmax(0,1fr)
+          );
+          gap: 10px;
+          margin-top: 18px;
+        }
+
+        .media-item {
+          min-width: 0;
+          padding: 12px;
+          border: 1px solid;
+          border-radius: 13px;
+          background: rgba(255,255,255,.48);
+          overflow: hidden;
+        }
+
+        .media-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 8px;
+        }
+
+        .media-top small {
+          display: block;
+          font-size: 8px;
+          font-weight: 950;
+          letter-spacing: .09em;
+          opacity: .5;
+        }
+
+        .media-top strong {
+          display: block;
+          max-width: 100%;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 11px;
+        }
+
+        .media-icon {
+          width: 28px;
+          height: 28px;
+          flex: 0 0 auto;
+          display: grid;
+          place-items: center;
+          border-radius: 8px;
+          background: rgba(255,255,255,.55);
+          font-weight: 950;
+        }
+
+        .media-item audio {
+          display: block;
+          width: 100%;
+          height: 36px;
+        }
+
+        .media-item video {
+          display: block;
+          width: 100%;
+          max-height: 260px;
+          border-radius: 9px;
+          background: #111;
+          object-fit: contain;
+        }
+
+        .bottom-links {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 16px;
+          margin-top: 14px;
+          font-size: 10px;
+        }
+
+        .bottom-links a {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          color: inherit;
+          opacity: .55;
+          text-decoration: none;
+        }
+
+        @media (max-width: 700px) {
+          .identity-bar {
+            grid-template-columns: 130px minmax(0,1fr);
+            gap: 14px;
+          }
+
+          .primary-photo {
+            width: 130px;
+            height: 150px;
+          }
+
+          .media-row {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        @media (max-width: 520px) {
+          .yourspace-nav {
+            padding: 0 16px;
+          }
+
+          .yourspace-wrap {
+            width: calc(100% - 20px);
+          }
+
+          .identity-bar {
+            grid-template-columns: 1fr;
+          }
+
+          .primary-photo {
+            width: 120px;
+            height: 135px;
+          }
+
+          .identity-copy h1 {
+            font-size: 34px;
+          }
+
+          .yourspace-content {
+            padding: 16px;
+          }
+
+          .yourspace-title {
+            display: block;
+          }
+
+          .yourspace-title > span {
+            display: block;
+            margin-top: 5px;
+          }
+        }
+      `}
+</style>
+    </main>
+  );
+}
