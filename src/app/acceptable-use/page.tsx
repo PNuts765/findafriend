@@ -269,10 +269,11 @@ export default function AcceptableUsePage() {
         <section style={sectionStyle}>
           <h2>15. Contact and safety concerns</h2>
           <p>
-            Use the official support or reporting channel made available
-            through FindAFriend to raise a concern. A dedicated, monitored
-            abuse-reporting contact should be published here before launch
-            if no existing reporting or support channel is available.
+            To report abuse, safety concerns, or policy violations, email
+            <a href="mailto:therealfindafriend@proton.me" style={{ color: '#d93670' }}>
+              therealfindafriend@proton.me
+            </a>. Include the relevant account or content details, but do not
+            attach or redistribute illegal material.
           </p>
         </section>
 

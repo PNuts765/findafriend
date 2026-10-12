@@ -318,10 +318,10 @@ export default function TermsPage() {
         <section style={sectionStyle}>
           <h2>16. Contact</h2>
           <p>
-            For questions about these Terms, use the official contact or
-            support channel made available through FindAFriend. A dedicated
-            legal contact address should be published here before launch if
-            no existing support channel is available.
+            For questions about these Terms, contact FindAFriend Support at{" "}
+            <a href="mailto:therealfindafriend@proton.me" style={{ color: '#d93670' }}>
+              therealfindafriend@proton.me
+            </a>.
           </p>
         </section>
 
